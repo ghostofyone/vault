@@ -1,3 +1,4 @@
+// app_state.js (updated)
 /**
  * app_state.js - Core State & Authentication
  */
@@ -116,23 +117,14 @@ window.App = {
         // Auto‑rejoin the room the user was in before the refresh
         await this.autoJoinLastRoom();
         
-        // Start Global Polling
         if (this.startPolling) this.startPolling();
-        
-        // Fetch global user list immediately
         if (this.fetchRoomUsers) this.fetchRoomUsers();
     },
 
-    /**
-     * Re‑join the room that was active before the page refresh.
-     * Only works if the room password is known (saved in memory/localStorage)
-     * and the user was actually inside the room (not just on room list) before refresh.
-     */
     async autoJoinLastRoom() {
         const lastRoomName = localStorage.getItem(this.getLsKey('last_active_room'));
         if (!lastRoomName) return;
 
-        // Password might be stored in memory or in localStorage
         let password = this.state.memoryKeys[lastRoomName];
         if (!password) {
             password = localStorage.getItem(this.getLsKey('rkey_' + lastRoomName));
@@ -142,19 +134,16 @@ window.App = {
         }
 
         if (!password) {
-            // Key is missing – we cannot re‑join automatically, clear marker
             localStorage.removeItem(this.getLsKey('last_active_room'));
             return;
         }
 
-        // Make sure the room is still in the user’s session list
         const room = this.state.rooms.find(r => r.name === lastRoomName);
         if (!room) {
             localStorage.removeItem(this.getLsKey('last_active_room'));
             return;
         }
 
-        // Suppress CSS transitions so we don't see a slide animation
         this._suppressTransition = true;
         try {
             await this.joinRoom(lastRoomName, password);
@@ -162,7 +151,6 @@ window.App = {
             console.error('Auto‑join failed', e);
             localStorage.removeItem(this.getLsKey('last_active_room'));
         } finally {
-            // Re-enable transitions after a short delay
             setTimeout(() => {
                 this._suppressTransition = false;
             }, 200);
@@ -202,11 +190,9 @@ window.App = {
     async handleLogin() {
         const u = document.getElementById('login-user').value;
         const p = document.getElementById('login-pass').value;
-        // const remember = document.getElementById('login-remember').checked; // REMOVED
         
         this.setBusy(true, "در حال بررسی...");
         
-        // Persistent login is now forced on server-side
         const res = await window.API.post('login', { username: u, password: p });
         this.setBusy(false);
         
@@ -217,7 +203,6 @@ window.App = {
             this.modal(null);
             this.onAuthenticated();
             this.toast("خوش آمدید " + (res.display_name || res.username));
-            // Security: Clear password
             document.getElementById('login-pass').value = '';
         } else {
             this.toast(res.message || "ورود ناموفق", true);
@@ -246,7 +231,6 @@ window.App = {
              this.modal(null);
              this.onAuthenticated();
              this.toast("حساب کاربری ایجاد شد!");
-             // Security: Clear passwords
              document.getElementById('reg-pass').value = '';
              document.getElementById('reg-pass-confirm').value = '';
         } else {
@@ -255,15 +239,12 @@ window.App = {
     },
 
     handleLogout(silent = false) {
-        // Stop global polling and clear user state FIRST
         if (this.state.pollTimeout) {
             clearTimeout(this.state.pollTimeout);
             this.state.pollTimeout = null;
         }
         
-        // Mark as logged out immediately to stop any in-flight polls from restarting
         if (silent) {
-            // For silent logout, we still want to clean up securely
             this.cleanupLocalSession();
             
             this.state.currentUser = null; 
@@ -299,26 +280,22 @@ window.App = {
     },
 
     cleanupLocalSession() {
-        // Stop global polling double check
         if (this.state.pollTimeout) clearTimeout(this.state.pollTimeout);
         this.state.pollTimeout = null;
 
-        // SECURITY: Securely wipe all room keys from storage for this user on logout
         if (this.state.currentUser) {
             const prefix = `vault_${this.state.currentUser}_rkey_`;
             Object.keys(localStorage).forEach(k => {
                 if (k.startsWith(prefix)) localStorage.removeItem(k);
             });
-            // Also remove last active room marker
             localStorage.removeItem(this.getLsKey('last_active_room'));
         }
 
-        // Update state early to prevent loops in syncRooms or other side effects
         this.state.currentUser = null;
         this.state.displayName = null;
         this.state.avatar = null;
 
-        this.leaveRoom(); // This may call syncRooms, but now syncRooms checks currentUser
+        this.leaveRoom(); 
         
         this.state.memoryKeys = {};
         this.state.sessions = {};
@@ -327,11 +304,8 @@ window.App = {
         this.state.rooms = [];
         this.state.notifications = [];
         
-        // Clear prefs from local variable logic if needed, but not critical
-        
         sessionStorage.clear();
         
-        // Force UI update to clear sidebar
         if (this.renderRoomList) this.renderRoomList();
     },
     
@@ -343,7 +317,7 @@ window.App = {
             this.toggleGlobalLoader(false);
             if (res.status === 'success') {
                 this.toast(res.message || "تاریخچه پاک شد");
-                this.fetchMessages(); // Refresh UI
+                this.fetchMessages();
             } else {
                 this.toast(res.message || "خطا در حذف", true);
             }
@@ -355,7 +329,6 @@ window.App = {
     },
 
     async syncRooms() {
-        // Prevent sync if not logged in - Critical for preventing loop on logout
         if (!this.state.currentUser) {
             this.state.rooms = [];
             if(this.renderRoomList) this.renderRoomList();
@@ -367,12 +340,10 @@ window.App = {
         try {
             const res = await window.API.post('get_joined_rooms', {});
             if (res.status === 'success') {
-                // Map existing state to preserve lastEventTime
                 const existingMap = new Map();
                 this.state.rooms.forEach(r => existingMap.set(r.name, r.lastEventTime || (Date.now() / 1000)));
 
                 this.state.rooms = res.rooms.map(serverRoom => {
-                    // FEATURE: Check LocalStorage for persisted key
                     if (!this.state.memoryKeys[serverRoom.name] && this.state.currentUser) {
                         const lsKey = this.getLsKey('rkey_' + serverRoom.name);
                         const storedPass = localStorage.getItem(lsKey);
@@ -390,7 +361,7 @@ window.App = {
                     };
                 });
             } else if (res.status === 'error' && (res.message === 'نیاز به احراز هویت' || res.message === 'نشست نامعتبر')) {
-                 this.handleLogout(true); // Silent force logout
+                 this.handleLogout(true);
             }
         } catch (e) {
             console.error("Sync failed", e);
@@ -400,7 +371,6 @@ window.App = {
 
     saveKey(name, keyStr) {
         this.state.memoryKeys[name] = keyStr;
-        // PERSISTENCE: Save to LocalStorage
         if (this.state.currentUser) {
             localStorage.setItem(this.getLsKey('rkey_' + name), keyStr);
         }
@@ -409,7 +379,6 @@ window.App = {
 
     removeKey(name) {
         delete this.state.memoryKeys[name];
-        // PERSISTENCE: Remove from LocalStorage
         if (this.state.currentUser) {
             localStorage.removeItem(this.getLsKey('rkey_' + name));
         }
@@ -417,7 +386,7 @@ window.App = {
     },
 
     handleNewEvents(newMsgs, newReactions, roomObj) {
-        const myName = this.state.currentUser; // Use cached username if activeRoom not set
+        const myName = this.state.currentUser; 
         const prefs = this.state.notifPrefs;
         let shouldTriggerBrowser = false;
         let lastBrowserTriggerMsg = "";
@@ -426,18 +395,11 @@ window.App = {
         
         const roomName = roomObj.name;
         const roomId = roomObj.id;
-        // Key might not be needed for display, but useful if we need to rejoin context
         const roomKey = roomObj.key || roomObj.keyStr; 
 
         newMsgs.forEach(m => {
             if (m.username === myName) return; 
 
-            // Check reply logic 
-            // In background fetch, we don't always have full history to check reply_to_id validity against MY messages.
-            // But we can check if reply_to_id exists. If we want precision, we need to check if that ID matches one of MY messages.
-            // For now, let's treat it as a message notification if we can't verify reply ownership easily in background.
-            // OR we iterate session.messages if available.
-            
             let isReplyToMe = false;
             if (m.reply_to_id && roomObj.messages) {
                  isReplyToMe = roomObj.messages.some(orig => orig.id === m.reply_to_id && orig.username === myName);
@@ -445,12 +407,10 @@ window.App = {
 
             const senderName = m.sender_display_name || m.username;
 
-            // System Message Handling
             if (m.type === 'system') {
                 try {
                     const sysData = JSON.parse(m.encrypted_data);
                     if (sysData.event === 'join') {
-                        // Only notify if it's a new join to a room I'm in
                         if (prefs.join) {
                             this.addToNotificationPanel({
                                 id: m.id, type: 'system',
@@ -471,7 +431,7 @@ window.App = {
                         }
                     }
                 } catch(e) {}
-                return; // Skip standard message processing
+                return;
             }
 
             if (prefs.reply && isReplyToMe) {
@@ -493,7 +453,6 @@ window.App = {
                 hasNewPanelItem = true;
             } 
             else if (prefs.msg) {
-                // General Message Notification
                 let previewText = m.decrypted || "پیام جدید";
                  if(m.fileInfo) {
                      if(Array.isArray(m.fileInfo)) previewText = `[${m.fileInfo.length} فایل]`;
@@ -559,7 +518,6 @@ window.App = {
     cleanupNotifications(serverMessages) {
         if (!serverMessages || serverMessages.length === 0 || !this.state.activeRoom) return;
         
-        // Only cleanup notifications for the ACTIVE room
         const activeRoomId = this.state.activeRoom.id;
 
         const msgMap = new Map();
@@ -569,7 +527,6 @@ window.App = {
         const initialLength = this.state.notifications.length;
         
         this.state.notifications = this.state.notifications.filter(n => {
-            // Skip notifications from other rooms
             if (n.roomId && n.roomId !== activeRoomId) return true;
 
             if (n.time < oldestMsgTime) return true;
@@ -609,14 +566,13 @@ window.App = {
     addToNotificationPanel(item) {
         if (this.state.notifications.some(n => n.id === item.id)) return;
         this.state.notifications.unshift(item);
-        if (this.state.notifications.length > 50) { // Increased limit for global view
+        if (this.state.notifications.length > 50) {
             this.state.notifications = this.state.notifications.slice(0, 50);
         }
     },
 
     renderNotificationPanel(incrementBadge = false) {
         const list = $('#notif-list');
-        // If not found (sidebar not rendered yet?), try again later? No, just return.
         if (!list) return;
         
         list.innerHTML = '';
@@ -652,19 +608,15 @@ window.App = {
             item.onclick = async () => { 
                 const realId = n.id.includes('_react_') ? n.id.split('_react_')[0] : n.id;
                 
-                // Logic to switch room if needed
                 if (!this.state.activeRoom || this.state.activeRoom.id !== n.roomId) {
                     if (this.state.sessions[n.roomId]) {
-                        // Already entered, just switch
                         this.state.pendingScrollMsgId = realId;
                         this.switchRoom(n.roomId);
                     } else if (n.roomName && n.key) {
-                        // Needs join
                         this.state.pendingScrollMsgId = realId; 
                         await this.joinRoom(n.roomName, n.key);
                     }
                 } else {
-                    // Already in room, just scroll
                     $('#app').classList.add('mobile-chat-active');
                     this.scrollToMsg(realId, true);
                 }
@@ -752,21 +704,11 @@ window.App = {
         if (id) { $('#modal-overlay').classList.add('active'); $(`#modal-${id}`).classList.remove('hidden'); }
     },
 
-    // ========== IMPROVED GLOBAL LOADER WITH SAFETY TIMEOUT ==========
-    _loaderSafetyTimer: null,
-
-    toggleGlobalLoader(show, text="در حال کار...", percent=null) {
+    toggleGlobalLoader(show, text = "در حال کار...", percent = null) {
         const l = $('#global-loader');
         const progContainer = $('#progress-container');
         const progBar = $('#progress-bar');
         const progText = $('#progress-percent');
-
-        // Clear any existing safety timer
-        if (this._loaderSafetyTimer) {
-            clearTimeout(this._loaderSafetyTimer);
-            this._loaderSafetyTimer = null;
-        }
-
         if (show) {
             $('#loader-text').innerText = text;
             l.classList.remove('hidden');
@@ -780,19 +722,24 @@ window.App = {
                 progText.classList.add('hidden');
                 progBar.style.width = '0%';
             }
-
-            // Safety: hide the loader after 30 seconds if not showing progress
-            // (progress mode is used for uploads which may take longer)
-            if (percent === null) {
-                this._loaderSafetyTimer = setTimeout(() => {
-                    console.warn('Global loader timed out – forcing hide');
-                    this.toggleGlobalLoader(false);
-                }, 30000);
-            }
+            // SAFETY NET: auto-hide after 30 seconds if not hidden by then
+            if (this._loaderSafetyTimer) clearTimeout(this._loaderSafetyTimer);
+            this._loaderSafetyTimer = setTimeout(() => {
+                if (!l.classList.contains('hidden')) {
+                    console.warn('Global loader stuck – auto‑hiding');
+                    l.classList.add('hidden');
+                    progContainer.classList.add('hidden');
+                    progText.classList.add('hidden');
+                }
+            }, 30000);
         } else {
             l.classList.add('hidden');
             progContainer.classList.add('hidden');
             progText.classList.add('hidden');
+            if (this._loaderSafetyTimer) {
+                clearTimeout(this._loaderSafetyTimer);
+                this._loaderSafetyTimer = null;
+            }
         }
     },
 
