@@ -1,0 +1,52 @@
+# =====================================
+# Enable Rewrite Engine
+# =====================================
+RewriteEngine On
+DirectorySlash On
+
+# =====================================
+# Trailing Slash Enforcement (Strict)
+# =====================================
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteCond %{REQUEST_URI} !/$
+RewriteRule ^(.*)$ %{REQUEST_URI}/ [L,R=301]
+
+# =====================================
+# HTTPS Redirect
+# =====================================
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# =====================================
+# Security Headers
+# =====================================
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Content-Security-Policy "default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self';"
+    
+    # Aggressive Cache Control for HTML & JS to prevent ghost caching
+    <FilesMatch "\.(html|htm|js|css)$">
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </FilesMatch>
+</IfModule>
+
+# =====================================
+# MIME Types
+# =====================================
+AddType text/css .css
+AddType application/javascript .js
+AddType application/json .json
+
+# Block sensitive files
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+<FilesMatch "(.db|.sqlite)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
