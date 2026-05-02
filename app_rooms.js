@@ -96,11 +96,17 @@ Object.assign(window.App, {
                 lastEventTime: Date.now()/1000
             };
             
-            // Store session
             this.state.sessions[res.room_id] = session;
             
-            // Switch to it
-            this.switchRoom(res.room_id);
+            // Switch to it – wrapped in try-catch so loader is always hidden
+            try {
+                await this.switchRoom(res.room_id);
+            } catch (e) {
+                console.error("switchRoom failed in joinRoom", e);
+                this.toast("خطا در ورود به اتاق", true);
+                this.setBusy(false);
+                this.toggleGlobalLoader(false);
+            }
 
         } catch (e) {
             console.error(e);
@@ -115,16 +121,13 @@ Object.assign(window.App, {
         if (!session) return;
         
         this.state.activeRoom = session;
-        this.state.messages = session.messages; // Reference assignment
+        this.state.messages = session.messages;
         
-        // UI Updates
         $('#chat-placeholder').classList.add('hidden');
         $('#active-chat').classList.remove('hidden');
 
-        // Handle CSS transition suppression for instant auto‑join
         const appEl = document.getElementById('app');
         if (this._suppressTransition) {
-            // Disable transitions on the layout container and its children
             const elements = [appEl, document.querySelector('.sidebar'), document.querySelector('.chat-interface')];
             elements.forEach(el => el && (el.style.transition = 'none'));
         }
@@ -132,7 +135,6 @@ Object.assign(window.App, {
         $('#app').classList.add('mobile-chat-active');
 
         if (this._suppressTransition) {
-            // Force reflow and then re‑enable transitions after a tick
             void appEl.offsetWidth;
             setTimeout(() => {
                 const elements = [appEl, document.querySelector('.sidebar'), document.querySelector('.chat-interface')];
@@ -150,7 +152,6 @@ Object.assign(window.App, {
             $('#btn-admin').classList.add('hidden');
         }
         
-        // Reset view for new room
         this.state.oldestLoadedId = null;
         $('#messages-container').innerHTML = `
             <button class="load-more-btn hidden" id="btn-load-more">
@@ -160,25 +161,49 @@ Object.assign(window.App, {
         `;
         $('#btn-load-more').onclick = () => this.loadHistory();
         
-        // Initial render from cache if available
+        // Force the input field to be fully functional
+        const input = $('#msg-input');
+        if (input) {
+            input.disabled = false;
+            input.readOnly = false;
+            input.placeholder = 'پیامی بنویسید...';
+            input.style.pointerEvents = 'auto';
+            this.adjustInputHeight();
+            this.checkInputDirection();
+        }
+
+        // Ensure the input area is visible and interactive
+        const inputArea = document.querySelector('.chat-input-area');
+        if (inputArea) {
+            inputArea.style.display = 'flex';
+            inputArea.style.pointerEvents = 'auto';
+        }
+
+        // Hide voice UI just in case
+        if (!this.state.isRecording && !this.state.recBlob) {
+            $('#voice-ui').classList.add('hidden');
+            $('#input-area').classList.remove('hidden');
+        }
+        
         if (session.messages.length > 0) {
             this.refreshDOM(session.messages, false, true, true);
         }
         
-        this.startPolling(); // Restart polling for new active room priority
+        this.startPolling();
         this.refreshNotifControls();
-        this.renderRoomList(); // Update active state in sidebar
+        this.renderRoomList();
         this.fetchRoomUsers();
         
         this.setBusy(false);
         this.toggleGlobalLoader(false);
 
-        // Wait for fetch to complete if needed?
-        // Ideally we should wait for fetchMessages to complete to ensure we have latest data for jumping
-        await this.fetchMessages(false, true);
-
-        // Persist last active room so it can be restored after page refresh
-        localStorage.setItem(this.getLsKey('last_active_room'), session.name);
+        try {
+            await this.fetchMessages(false, true);
+        } catch (e) {
+            console.error("fetchMessages error in switchRoom", e);
+        } finally {
+            localStorage.setItem(this.getLsKey('last_active_room'), session.name);
+        }
     },
 
     updateRoomHeader() {
@@ -209,7 +234,6 @@ Object.assign(window.App, {
     leaveRoom() {
         if (this.state.activeRoom) {
             // SECURITY: Wipe key from Memory AND LocalStorage
-            // This is triggered by "Close Room" button
             const name = this.state.activeRoom.name;
             if (name) {
                 this.removeKey(name); 
