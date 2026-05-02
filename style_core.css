@@ -1,0 +1,73 @@
+:root {
+    --bg: #0f0f13;
+    --bg-sec: rgba(30, 30, 35, 0.85); /* Glass effect */
+    --bg-ter: #2d2d35;
+    --text: #e0e0e0;
+    --text-sec: #a0a0a0;
+    --primary: #00d369; 
+    --primary-dark: #00b359;
+    --danger: #ff4444;
+    --msg-in: #2a2a30;
+    --msg-out: #005c4b;
+    --radius: 12px;
+    --sidebar-width: 300px;
+    --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@font-face {
+    font-family: 'Persian';
+    src: url('persianfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+}
+
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+    font-family: "Persian", "Vazirmatn", "Tahoma", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    scrollbar-width: thin;
+    scrollbar-color: #444 transparent;
+}
+
+/* FIX: Use dvh for mobile browsers to handle address bars correctly */
+body { 
+    background-color: var(--bg); 
+    color: var(--text); 
+    height: 100vh; /* Fallback */
+    height: 100dvh; 
+    width: 100vw;
+    overflow: hidden; 
+    font-size: 15px; 
+    background-image: radial-gradient(circle at 50% 10%, #1a1a20 0%, #0f0f13 100%); 
+    direction: rtl; /* Enforce RTL */
+    -webkit-tap-highlight-color: transparent; /* Remove blue highlight on tap */
+}
+
+/* Optimize Touch Targets */
+button, .icon-btn, .room-item, .notif-item, .btn-primary, .btn-secondary, .btn-danger, input, select, textarea {
+    touch-action: manipulation;
+}
+
+/* Specific LTR Inputs */
+.ltr-input {
+    direction: ltr;
+    text-align: left;
+}
+
+/* Global Select Options Styling */
+select option {
+    background-color: #222226;
+    color: #fff;
+    padding: 10px;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* Layout */
+.layout-container { display: flex; height: 100%; width: 100%; position: relative; overflow: hidden; }
+.hidden { display: none !important; }
