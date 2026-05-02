@@ -1,0 +1,79 @@
+
+.mobile-only { display: none; }
+@media (max-width: 768px) {
+    /* Prevent iOS zoom on inputs */
+    input, select, textarea { font-size: 16px !important; }
+
+    /* Layout Transforms */
+    /* Sidebar: Default State (Visible) */
+    .sidebar { 
+        width: 100%; 
+        position: absolute; 
+        top: 0; 
+        right: 0; 
+        height: 100%; 
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+        transform: translateX(0); 
+        z-index: 200; /* Increased to stay above input (100) */
+        border-left: none; 
+        opacity: 1;
+        pointer-events: auto;
+        /* Ensure display is block when visible */
+        display: flex;
+    }
+
+    /* Chat Interface: Default State (Hidden off-screen) */
+    .chat-interface { 
+        width: 100%; 
+        height: 100%; 
+        position: absolute; 
+        top: 0; 
+        right: 0; 
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+        transform: translateX(-100%); 
+        z-index: 40; 
+        background: var(--bg);
+    }
+    
+    /* State: Chat is Active */
+    /* Hide sidebar completely to stop it from stealing clicks */
+    .layout-container.mobile-chat-active .sidebar { 
+        transform: translateX(30%); 
+        opacity: 0; 
+        pointer-events: none; 
+        z-index: 10;
+        /* Delay display none to allow transition to finish, then hide */
+        display: none; 
+    }
+
+    .layout-container.mobile-chat-active .chat-interface { 
+        transform: translateX(0); 
+        z-index: 40; 
+    }
+
+    /* Ensure Input Area is styled for mobile */
+    .chat-input-area { 
+        padding: 10px 8px; 
+        padding-bottom: calc(10px + env(safe-area-inset-bottom)); 
+        gap: 5px; 
+    }
+
+    .mobile-only { display: flex; }
+    
+    /* Elements Sizing */
+    .full-emoji-picker { width: 95%; height: 40vh; bottom: 70px; right: 2.5%; z-index: 201; }
+
+    .media-buttons { padding-bottom: 6px; gap: 0; }
+    .media-buttons .icon-btn { width: 34px; height: 34px; margin-left: 0; margin-right: 0; }
+    .input-wrapper { padding: 6px 12px; }
+    .send-btn { width: 40px; height: 40px; }
+
+    /* Text Viewer Adjustments */
+    .tv-container { width: 100%; height: 100%; border-radius: 0; border: none; }
+    .mobile-hidden { display: none; }
+    .tv-btn { padding: 0 10px; }
+    
+    /* Fix Toast position on mobile to not cover input */
+    .toast { bottom: 80px; width: 90%; max-width: none; left: 5%; transform: none; }
+    .toast.show { bottom: 100px; transform: none; }
+}
