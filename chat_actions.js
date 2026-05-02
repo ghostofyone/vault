@@ -38,7 +38,7 @@ Object.assign(window.App, {
             } else if (type === 'update_expiry') {
                 this.state.activeRoom.expiry = parseInt(value);
                 this.updateRoomHeader(); 
-                this.checkExpiry(); // Immediate cleanup
+                this.checkExpiry();
             } else if (type === 'pin_message') {
                 this.fetchMessages(); 
             } else if (type === 'add_owner' || type === 'remove_owner') {
@@ -99,10 +99,8 @@ Object.assign(window.App, {
     },
 
     async sendMessage(type = 'text', content = null, fileIds = null) {
-        // Prevent duplicate sending from UI double-clicks
         if (this.state.isSending) return;
         
-        // Block sending if obviously offline
         if (this.state.isOffline) {
             this.toast("اتصال اینترنت برقرار نیست", true);
             return;
@@ -117,7 +115,7 @@ Object.assign(window.App, {
 
         try {
             const msgKey = await window.CryptoUtils.generateMessageKey();
-            let payload = (type === 'text') ? window.enc.encode(content) : content; // For files, content IS the JSON string
+            let payload = (type === 'text') ? window.enc.encode(content) : content;
             
             const encContent = await window.CryptoUtils.encryptContent(payload, msgKey);
             const encKey = await window.CryptoUtils.encryptMessageKey(msgKey, this.state.activeRoom.key);
@@ -125,7 +123,6 @@ Object.assign(window.App, {
             const packet = { msgType: type, contentIV: encContent.iv, contentData: encContent.data, keyIV: encKey.iv, keyData: encKey.data };
             const replyId = this.state.replyTo ? this.state.replyTo.id : null;
             
-            // Generate nonce for idempotency
             const nonce = window.CryptoUtils.generateSalt();
 
             const data = { 
@@ -134,20 +131,18 @@ Object.assign(window.App, {
                 type: type, 
                 encrypted_data: JSON.stringify(packet), 
                 reply_to: replyId, 
-                file_ids: fileIds, // Changed to array
+                file_ids: fileIds,
                 nonce: nonce 
             };
             
             const res = await window.API.post('send_message', data);
 
             if (res.status === 'success') {
-                if (!res.duplicate) { // Only clear if not a delayed duplicate response
+                if (!res.duplicate) {
                     $('#msg-input').value = ''; this.adjustInputHeight();
                     if(this.checkInputDirection) this.checkInputDirection();
                     this.setReply(null); 
                 }
-                // Fetch messages and force an animated scroll to bottom
-                // Reset poll delay to ensure snappy response
                 this.state.pollDelay = 2500;
                 await this.fetchMessages(false, false, true);
             } else {
@@ -225,7 +220,6 @@ Object.assign(window.App, {
         const res = await window.API.post('delete_message', { msg_id: msgId, username: this.state.activeRoom.username });
         if(res.status === 'success') {
             this.removeMessageFromDom(msgId);
-            // Update the array, keeping the reference for active room
             const filtered = this.state.messages.filter(m => m.id !== msgId);
             this.state.messages.length = 0;
             filtered.forEach(m => this.state.messages.push(m));
@@ -235,43 +229,38 @@ Object.assign(window.App, {
     },
 
     startPolling() {
-        // Clear existing timeout
         if (this.state.pollTimeout) clearTimeout(this.state.pollTimeout);
-        this.state.pollDelay = 2500; // Reset delay
+        this.state.pollDelay = 2500;
 
-        // Initial fetch for active room if exists
         if (this.state.activeRoom) {
             this.fetchMessages(false, true); 
         }
         
-        // Start recursive polling loop
         this.pollLoop();
     },
 
-    // Recursive polling function with exponential backoff support
     async pollLoop() {
-        // Stop if not logged in (handled by handleLogout clearing timeout)
         if (!this.state.currentUser) return;
         
-        // Skip if offline, check again in 5 seconds
         if (this.state.isOffline) {
             this.state.pollTimeout = setTimeout(() => this.pollLoop(), 5000);
             return;
         }
 
+        // SAFETY: Recover from stuck voice UI (e.g., recording stopped but UI remains)
+        if (this.state.isRecording === false && !this.state.recBlob && !$('#voice-ui').classList.contains('hidden')) {
+            this.cancelRecord();
+        }
+
         try {
-            // 1. Fetch Active Room (High Priority)
             if (this.state.activeRoom) {
                 await this.fetchMessages(true);
             }
 
-            // 1.5 Fetch User List (Every poll to ensure real-time updates)
             if (this.state.currentUser) {
                 await this.fetchRoomUsers();
             }
 
-            // 2. Fetch Background Rooms (Lower Priority / Batched)
-            // Use sessions to find unlocked rooms
             const bgSessions = Object.values(this.state.sessions).filter(s => 
                 !this.state.activeRoom || s.id !== this.state.activeRoom.id
             );
@@ -280,39 +269,29 @@ Object.assign(window.App, {
                 await this.checkBackgroundNotifications(bgSessions);
             }
 
-            // Success: Reset delay to default
             this.state.pollDelay = 2500;
         } catch (e) {
             console.warn("Polling failed, backing off", e);
-            // Failure: Exponential backoff (max 30s)
             this.state.pollDelay = Math.min(this.state.pollDelay * 1.5, 30000);
         }
 
-        // Schedule next poll ONLY after this one finishes (prevents stacking)
-        // And ONLY if we are still logged in
         if (this.state.currentUser) {
             this.state.pollTimeout = setTimeout(() => this.pollLoop(), this.state.pollDelay);
         }
     },
 
     async checkBackgroundNotifications(sessions) {
-        // Iterate entered background rooms and fetch updates
         for (const session of sessions) {
             try {
-                // Fetch only new messages since last event
                 const lastTime = session.lastEventTime || 0;
                 
                 const res = await window.API.post('get_messages', { 
                     room_id: session.id, 
-                    limit: 10, // Small limit for background check
+                    limit: 10,
                     after_id: null 
                 });
 
                 if (res.status === 'success' && res.messages.length > 0) {
-                     // Filter new messages/reactions
-                     // Server returns latest first, we check timestamps
-                     
-                     // Decrypt new messages
                      const newMsgs = [];
                      const newReactions = [];
                      
@@ -322,22 +301,18 @@ Object.assign(window.App, {
                          if (msg.created_at > lastTime) {
                              if (msg.created_at > maxTime) maxTime = msg.created_at;
                              
-                             // Decrypt
                              try {
                                  await this.decryptMessageData(msg, session.key);
                                  newMsgs.push(msg);
                                  
-                                 // Update session memory
                                  if (!session.messages) session.messages = [];
                                  
-                                 // Avoid duplicates
                                  if (!session.messages.some(m => m.id === msg.id)) {
                                      session.messages.push(msg);
                                  }
                              } catch(e) { console.error("BG Decrypt error", e); }
                          }
                          
-                         // Check reactions
                          if (msg.reactions) {
                              msg.reactions.forEach(r => {
                                  if (r.created_at > lastTime) {
@@ -345,7 +320,6 @@ Object.assign(window.App, {
                                      newReactions.push({ msgId: msg.id, reaction: r });
                                  }
                              });
-                             // Update reactions in memory msg if exists
                              if (session.messages) {
                                  const memMsg = session.messages.find(m => m.id === msg.id);
                                  if (memMsg) memMsg.reactions = msg.reactions;
@@ -353,7 +327,6 @@ Object.assign(window.App, {
                          }
                      }
                      
-                     // Sort memory messages
                      if (session.messages) session.messages.sort((a,b) => a.created_at - b.created_at);
                      
                      session.lastEventTime = maxTime;
@@ -371,14 +344,11 @@ Object.assign(window.App, {
     async fetchMessages(isPoll = false, isInitial = false, forceScrollAnimated = false) {
         if (!this.state.activeRoom) return;
         
-        // Limit 50 to match configurable PHP side
         const res = await window.API.post('get_messages', { room_id: this.state.activeRoom.id, limit: 50 });
         
         if (res.status === 'success') {
-            // Remove Stale Notifications (Reactions/Replies deleted)
             if (this.cleanupNotifications) this.cleanupNotifications(res.messages);
 
-            // Sync Room State
             if (res.room_expiry !== undefined) this.state.activeRoom.expiry = parseInt(res.room_expiry);
             if (this.state.activeRoom.isOwner) $('#chk-admin-lock').checked = (res.is_locked == 1);
             
@@ -414,10 +384,6 @@ Object.assign(window.App, {
                 });
                 if (idsToDelete.length > 0) {
                     idsToDelete.forEach(id => this.removeMessageFromDom(id));
-                    // Update array via splice/push or reassignment to keep reference valid if possible
-                    // But we are using the array instance for the active session.
-                    // We must modify it in place or update the reference properly.
-                    
                     const kept = this.state.messages.filter(m => !idsToDelete.includes(m.id));
                     this.state.messages.length = 0;
                     kept.forEach(k => this.state.messages.push(k));
@@ -433,7 +399,6 @@ Object.assign(window.App, {
                 if (this.state.activeRoom.isOwner) $('#btn-unpin').classList.remove('hidden'); else $('#btn-unpin').classList.add('hidden');
                 const pinContentArea = $('#pinned-content-area'); pinContentArea.innerHTML = ''; 
                 
-                // Helper to get first file if array
                 let fileInfo = pinMsg.fileInfo;
                 if (Array.isArray(fileInfo)) fileInfo = fileInfo[0];
 
@@ -464,9 +429,7 @@ Object.assign(window.App, {
 
             this.refreshDOM(serverMsgs, false, isInitial, forceScrollAnimated);
             
-            // --- NOTIFICATION & EVENT PROCESSING ---
             if (isPoll) {
-                // Collect newly added events since last check
                 const lastTime = this.state.activeRoom.lastEventTime || 0;
                 
                 const newMsgs = serverMsgs.filter(m => m.created_at > lastTime);
@@ -488,10 +451,8 @@ Object.assign(window.App, {
             this.checkExpiry(); 
             this.checkScrollPosition();
         } else if (res.status === 'error') {
-            // Throw error so pollLoop can catch it and backoff
-            // Except specific logic errors like auth failure
             if (res.message === 'نیاز به احراز هویت' || res.message === 'نشست نامعتبر') {
-                this.handleLogout(true); // Call silent logout immediately
+                this.handleLogout(true);
                 return;
             }
             throw new Error(res.message);
@@ -499,7 +460,6 @@ Object.assign(window.App, {
     },
 
     async processMessage(msg) {
-        // System Message Display
         if (msg.type === 'system') {
              try {
                  const sysData = JSON.parse(msg.encrypted_data);
@@ -517,7 +477,6 @@ Object.assign(window.App, {
         const existing = this.state.messages.find(m => m.id === msg.id);
         if (existing) {
             existing.reactions = msg.reactions;
-            // Update Avatar if changed on server
             if (existing.sender_avatar !== msg.sender_avatar) {
                 existing.sender_avatar = msg.sender_avatar;
                 const el = document.getElementById('msg-row-' + existing.id);
@@ -540,7 +499,6 @@ Object.assign(window.App, {
                 }
             }
 
-            // Update Display Name if changed on server
             if (existing.sender_display_name !== msg.sender_display_name) {
                 existing.sender_display_name = msg.sender_display_name;
                 const el = document.getElementById('msg-row-' + existing.id);
@@ -569,7 +527,6 @@ Object.assign(window.App, {
     },
 
     async decryptMessageData(msg, key) {
-        // Separated logic for reuse (though not heavily used in background poll for now due to key complexity)
         const envelope = JSON.parse(msg.encrypted_data);
         const decryptedBuf = await window.CryptoUtils.decryptEnvelope(envelope, key);
         const decryptedStr = window.dec.decode(decryptedBuf); 
@@ -624,7 +581,6 @@ Object.assign(window.App, {
         const uploadedIds = [];
         
         try {
-            // Sequential upload loop to handle progress
             for (let i = 0; i < totalFiles; i++) {
                 const { file, type } = files[i];
                 const progressBase = (i / totalFiles) * 100;
@@ -636,11 +592,9 @@ Object.assign(window.App, {
                 const encFile = await window.CryptoUtils.encryptBuffer(buffer, msgKey); 
                 const encryptedBlob = new Blob([encFile.data], { type: 'application/octet-stream' });
                 
-                // Metadata encryption
                 const meta = JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', size: file.size });
                 const encMeta = await window.CryptoUtils.encryptContent(window.enc.encode(meta), msgKey);
                 
-                // Caption encryption (attach to first file in batch or replicate? Attach to first is simpler)
                 let encCaption = null;
                 if (caption && i === 0) {
                     encCaption = await window.CryptoUtils.encryptContent(window.enc.encode(caption), msgKey);
@@ -656,7 +610,6 @@ Object.assign(window.App, {
                     file: encryptedBlob
                 };
                 
-                // Upload individual file
                 const upRes = await window.API.uploadFile('upload_file', uploadPayload, (percent) => {
                     const stepPercent = percent * (1 / totalFiles);
                     const totalPercent = progressBase + stepPercent;
@@ -679,7 +632,6 @@ Object.assign(window.App, {
                 });
             }
 
-            // Final Send
             await this.sendMessage('file_link', JSON.stringify(filePackets), uploadedIds);
 
             this.toast('ارسال شد!'); 
