@@ -19,20 +19,6 @@ if (isset($_SERVER['HTTP_ORIGIN'])) {
     header('Access-Control-Allow-Credentials: true');
 }
 
-// 2. Secure Session Configuration
-$sessionSavePath = __DIR__ . '/sessions';
-if (!file_exists($sessionSavePath)) {
-    @mkdir($sessionSavePath, 0755, true);
-    @file_put_contents($sessionSavePath . '/.htaccess', "Order Allow,Deny\nDeny from all");
-    @file_put_contents($sessionSavePath . '/index.html', "");
-}
-session_save_path($sessionSavePath);
-
-// Standard GC settings - 5 Years
-ini_set('session.gc_maxlifetime', 157680000); 
-ini_set('session.gc_probability', 1);
-ini_set('session.gc_divisor', 1000);
-
 // Detect HTTPS for Secure Cookies
 $isHttps = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') 
            || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
@@ -49,9 +35,10 @@ session_set_cookie_params([
     'httponly' => true,
     'samesite' => 'Strict'
 ]);
-session_start();
 
-// --- DB Init ---
+// =============================================
+// DATABASE INITIALISATION
+// =============================================
 try {
     $db = new SQLite3($DB_FILE);
     $db->enableExceptions(true);
@@ -142,6 +129,12 @@ try {
             FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_react_msg ON reactions(message_id);
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            data TEXT,
+            last_access INTEGER,
+            expires INTEGER
+        );
     ");
 
     // Migration Checks
@@ -183,8 +176,74 @@ try {
     exit(json_encode(['status' => 'error', 'message' => 'Database Error']));
 }
 
+// =============================================
+// CUSTOM SESSION HANDLER (Database-based)
+// =============================================
+class DatabaseSessionHandler implements SessionHandlerInterface
+{
+    private SQLite3 $db;
+
+    public function __construct(SQLite3 $db)
+    {
+        $this->db = $db;
+    }
+
+    public function open($savePath, $sessionName): bool
+    {
+        return true;
+    }
+
+    public function close(): bool
+    {
+        return true;
+    }
+
+    public function read($id): string|false
+    {
+        $stmt = $this->db->prepare("SELECT data FROM sessions WHERE id = :id AND expires > :now");
+        $stmt->bindValue(':id', $id);
+        $stmt->bindValue(':now', time());
+        $res = $stmt->execute();
+        $row = $res->fetchArray(SQLITE3_ASSOC);
+        return $row ? $row['data'] : '';
+    }
+
+    public function write($id, $data): bool
+    {
+        $lifetime = (int) ini_get('session.gc_maxlifetime');
+        if ($lifetime === 0) {
+            $lifetime = 157680000; // 5 years as fallback
+        }
+        $expires = time() + $lifetime;
+        $stmt = $this->db->prepare("INSERT OR REPLACE INTO sessions (id, data, last_access, expires) VALUES (:id, :data, :now, :expires)");
+        $stmt->bindValue(':id', $id);
+        $stmt->bindValue(':data', $data);
+        $stmt->bindValue(':now', time());
+        $stmt->bindValue(':expires', $expires);
+        return $stmt->execute() !== false;
+    }
+
+    public function destroy($id): bool
+    {
+        $stmt = $this->db->prepare("DELETE FROM sessions WHERE id = :id");
+        $stmt->bindValue(':id', $id);
+        return $stmt->execute() !== false;
+    }
+
+    public function gc($max_lifetime): int|false
+    {
+        $this->db->exec("DELETE FROM sessions WHERE expires < " . time());
+        return 0;
+    }
+}
+
+// Set the database session handler (MUST be before session_start)
+session_set_save_handler(new DatabaseSessionHandler($db));
+
+// Start the session (now handled by the database)
+session_start();
+
 // --- Auto-Login Logic (Restore Session from Persistent Cookie) ---
-// This runs if PHP session is empty (expired/deleted) but 'vault_remember' cookie exists.
 if (!isset($_SESSION['user_id']) && isset($_COOKIE['vault_remember'])) {
     $parts = explode(':', $_COOKIE['vault_remember']);
     if (count($parts) === 2) {
@@ -198,7 +257,6 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['vault_remember'])) {
         $token = $res->fetchArray(SQLITE3_ASSOC);
         
         if ($token && password_verify($validator, $token['hashed_validator'])) {
-            // Valid Token -> Restore Session
             $_SESSION['user_id'] = $token['user_id'];
             
             $u = $db->querySingle("SELECT username FROM users WHERE id = " . $token['user_id'], true);
@@ -207,12 +265,7 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['vault_remember'])) {
                 $_SESSION['EXTENDED_SESSION'] = true;
                 $_SESSION['LAST_ACTIVITY'] = time();
                 
-                // CRITICAL FIX: Disable Token Rotation on Auto-Login
-                // Rotating tokens on every concurrent request (polling) causes race conditions
-                // where valid users get logged out because an old cookie was sent.
-                // We trust the long-lived token until manual logout.
-                
-                // Refresh session cookie to match token expiry (Persistent Session)
+                // Refresh session cookie to match token expiry
                 setcookie(session_name(), session_id(), $token['expires'], $cookieParams['path'], $cookieParams['domain'], $useSecureCookies, $cookieParams['httponly']);
             }
         }
